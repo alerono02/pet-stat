@@ -4,8 +4,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.config import settings
 from app.database import Base, get_db
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def no_auto_tables(monkeypatch):
+    monkeypatch.setattr(settings, "auto_create_tables", False)
 
 
 @pytest.fixture()

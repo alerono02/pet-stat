@@ -1,65 +1,55 @@
-from fastapi import FastAPI
-from pydantic import BaseModel, Field, field_validator
+from datetime import date
+from typing import Literal
 
-app = FastAPI(title="Feeding Norm Service")
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
+import calc
+from calc import calculate
+
+app = FastAPI(title="Pet Care Service")
+
+Species = Literal["dog", "cat"]
+FoodType = Literal["dry", "wet", "mixed"]
+Activity = Literal["low", "normal", "high"]
 
 
-def calculate(species: str, weight_kg: float, age_months: int) -> dict:
-    """Норма кормления по весу и возрасту."""
-    if species not in ("dog", "cat"):
-        raise ValueError("unknown species")
-    if weight_kg <= 0:
-        raise ValueError("weight must be > 0")
-    if age_months < 0:
-        raise ValueError("age must be >= 0")
-
-    if species == "dog":
-        if age_months < 4:
-            life_stage, k = "щенок", 3.0
-        elif age_months < 12:
-            life_stage, k = "щенок", 2.0
-        elif age_months < 84:
-            life_stage, k = "взрослый", 1.6
-        else:
-            life_stage, k = "пожилой", 1.2
-    else:
-        if age_months < 12:
-            life_stage, k = "котёнок", 2.5
-        elif age_months < 84:
-            life_stage, k = "взрослый", 1.2
-        else:
-            life_stage, k = "пожилой", 1.1
-
-    rer = 70 * (weight_kg**0.75)
-    daily_kcal = round(rer * k)
-    daily_grams = round(daily_kcal / 3.5)
-
-    if age_months < 4:
-        meals_per_day = 4
-    elif age_months < 12:
-        meals_per_day = 3
-    else:
-        meals_per_day = 2
-
-    return {
-        "daily_kcal": daily_kcal,
-        "daily_grams": daily_grams,
-        "meals_per_day": meals_per_day,
-        "life_stage": life_stage,
-    }
+@app.exception_handler(ValueError)
+async def value_error_handler(_: Request, exc: ValueError):
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 class FeedingRequest(BaseModel):
-    species: str
+    species: Species
     weight_kg: float = Field(..., gt=0)
     age_months: int = Field(..., ge=0)
+    neutered: bool = False
+    activity: Activity = "normal"
+    food_type: FoodType = "dry"
 
-    @field_validator("species")
-    @classmethod
-    def species_ok(cls, v: str) -> str:
-        if v not in ("dog", "cat"):
-            raise ValueError("species must be dog or cat")
-        return v
+
+class WaterRequest(BaseModel):
+    species: Species
+    weight_kg: float = Field(..., gt=0)
+    food_type: FoodType = "dry"
+
+
+class HumanAgeRequest(BaseModel):
+    species: Species
+    age_months: int = Field(..., ge=0)
+    weight_kg: float | None = Field(None, gt=0)
+
+
+class VaccinationRequest(BaseModel):
+    species: Species
+    birth_date: date
+    today: date | None = None
+
+
+class MealPlanRequest(FeedingRequest):
+    first_meal: str = "08:00"
+    last_meal: str = "20:00"
 
 
 @app.get("/health")
@@ -69,4 +59,40 @@ def health():
 
 @app.post("/feeding-norm")
 def feeding_norm(body: FeedingRequest):
-    return calculate(body.species, body.weight_kg, body.age_months)
+    return calculate(
+        body.species,
+        body.weight_kg,
+        body.age_months,
+        body.neutered,
+        body.activity,
+        body.food_type,
+    )
+
+
+@app.post("/water-norm")
+def water_norm(body: WaterRequest):
+    return calc.water_norm(body.species, body.weight_kg, body.food_type)
+
+
+@app.post("/human-age")
+def human_age(body: HumanAgeRequest):
+    return calc.human_age(body.species, body.age_months, body.weight_kg)
+
+
+@app.post("/vaccination-schedule")
+def vaccination_schedule(body: VaccinationRequest):
+    return calc.vaccination_schedule(body.species, body.birth_date, body.today)
+
+
+@app.post("/meal-plan")
+def meal_plan(body: MealPlanRequest):
+    return calc.meal_plan(
+        body.species,
+        body.weight_kg,
+        body.age_months,
+        body.first_meal,
+        body.last_meal,
+        body.neutered,
+        body.activity,
+        body.food_type,
+    )

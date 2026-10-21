@@ -1,76 +1,117 @@
-import { Fragment, useEffect, useState } from "react";
-import CustomSelect from "./CustomSelect.jsx";
-import DatePicker from "./DatePicker.jsx";
+import { Fragment, useCallback, useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import Modal from "./Modal.jsx";
+import PetForm from "./PetForm.jsx";
+import Pagination from "./Pagination.jsx";
+import { useToast } from "./Toast.jsx";
+import usePageTitle from "./usePageTitle.js";
 import {
   SPECIES_LABEL,
-  SPECIES_OPTIONS,
   ageLabel,
-  errorMessage,
+  api,
   fetchPets,
-  readError,
+  formatDate,
+  formatWeight,
+  isAbort,
+  pluralize,
 } from "./api.js";
 
-const EMPTY_FORM = {
-  name: "",
-  species: "dog",
-  breed: "",
-  birth_date: "",
-  weight_kg: "",
-  owner_name: "",
-};
+const PAGE_SIZE = 10;
+
+const SPECIES_FILTERS = [
+  { value: "", label: "Все" },
+  { value: "dog", label: "Собаки" },
+  { value: "cat", label: "Кошки" },
+];
+
+const COLUMNS = [
+  { sort: "name", label: "Кличка" },
+  { label: "Вид" },
+  { label: "Порода", hideSm: true },
+  { sort: "age", label: "Возраст" },
+  { sort: "weight", label: "Вес" },
+  { label: "Владелец", hideSm: true },
+];
 
 export default function PetsPage() {
-  const [pets, setPets] = useState([]);
-  const [records, setRecords] = useState({});
-  const [expanded, setExpanded] = useState(null);
-  const [loadingPets, setLoadingPets] = useState(false);
-  const [petsError, setPetsError] = useState("");
+  usePageTitle("Питомцы");
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const q = params.get("q") || "";
+  const species = params.get("species") || "";
+  const sort = params.get("sort") || "id";
+  const order = params.get("order") || "asc";
+  const page = Math.max(1, Number(params.get("page")) || 1);
+
+  const [search, setSearch] = useState(q);
+  const [data, setData] = useState({ items: [], total: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const [expanded, setExpanded] = useState(null);
+  const [records, setRecords] = useState({});
+
+  const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
 
+  const update = useCallback(
+    (patch) => {
+      const next = new URLSearchParams(params);
+      Object.entries(patch).forEach(([key, value]) => {
+        if (value === "" || value === null || value === undefined) next.delete(key);
+        else next.set(key, String(value));
+      });
+      if (next.get("page") === "1") next.delete("page");
+      if (next.get("sort") === "id") next.delete("sort");
+      if (next.get("order") === "asc") next.delete("order");
+      setParams(next, { replace: true });
+    },
+    [params, setParams]
+  );
+
+  // поиск с задержкой, чтобы не слать запрос на каждую букву
   useEffect(() => {
-    loadPets();
-  }, []);
+    if (search === q) return;
+    const t = setTimeout(() => update({ q: search.trim(), page: 1 }), 350);
+    return () => clearTimeout(t);
+  }, [search, q, update]);
 
   useEffect(() => {
-    if (!modalOpen) return;
-    const handleKey = (e) => {
-      if (e.key === "Escape") setModalOpen(false);
-    };
-    document.addEventListener("keydown", handleKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", handleKey);
-      document.body.style.overflow = prev;
-    };
-  }, [modalOpen]);
+    const ctrl = new AbortController();
+    setLoading(true);
+    setError("");
+    fetchPets({ q, species, sort, order, page, page_size: PAGE_SIZE }, ctrl.signal)
+      .then((res) => {
+        const pages = Math.max(1, Math.ceil(res.total / PAGE_SIZE));
+        if (res.total > 0 && page > pages) {
+          update({ page: pages });
+          return;
+        }
+        setData(res);
+      })
+      .catch((err) => {
+        if (!isAbort(err)) setError(err.message);
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoading(false);
+      });
+    return () => ctrl.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, species, sort, order, page, reloadKey]);
 
-  function openModal() {
-    setForm(EMPTY_FORM);
-    setFormError("");
-    setModalOpen(true);
+  function reload() {
+    setRecords({});
+    setExpanded(null);
+    setReloadKey((n) => n + 1);
   }
 
-  function closeModal() {
-    if (saving) return;
-    setModalOpen(false);
-    setFormError("");
-  }
-
-  async function loadPets() {
-    setLoadingPets(true);
-    setPetsError("");
-    try {
-      setPets(await fetchPets());
-    } catch (err) {
-      setPetsError(err.message || "Не удалось связаться с сервером.");
-    } finally {
-      setLoadingPets(false);
-    }
+  function toggleSort(key) {
+    if (sort === key) update({ order: order === "asc" ? "desc" : "asc", page: 1 });
+    else update({ sort: key, order: "asc", page: 1 });
   }
 
   async function toggleRecords(petId) {
@@ -81,54 +122,33 @@ export default function PetsPage() {
     setExpanded(petId);
     if (records[petId]) return;
     try {
-      const res = await fetch(`/api/pets/${petId}/records`);
-      if (!res.ok) {
-        setPetsError(errorMessage(res.status, await readError(res)));
-        return;
-      }
-      const data = await res.json();
-      setRecords((prev) => ({ ...prev, [petId]: data }));
-    } catch {
-      setPetsError("Не удалось загрузить медкарту.");
+      const list = await api.records(petId);
+      setRecords((prev) => ({ ...prev, [petId]: list }));
+    } catch (err) {
+      toast.error(err.message);
+      setExpanded(null);
     }
   }
 
-  async function addPet(e) {
-    e.preventDefault();
+  async function addPet(payload) {
     setSaving(true);
     setFormError("");
-    if (!form.birth_date) {
-      setFormError("Укажите дату рождения.");
-      setSaving(false);
-      return;
-    }
-    const payload = {
-      name: form.name.trim(),
-      species: form.species,
-      breed: form.breed.trim() || null,
-      birth_date: form.birth_date,
-      weight_kg: Number(form.weight_kg),
-      owner_name: form.owner_name.trim() || null,
-    };
     try {
-      const res = await fetch("/api/pets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        setFormError(errorMessage(res.status, await readError(res)));
-        return;
-      }
-      setModalOpen(false);
-      setForm(EMPTY_FORM);
-      await loadPets();
-    } catch {
-      setFormError("Не удалось сохранить питомца.");
+      const pet = await api.createPet(payload);
+      setAdding(false);
+      toast.success(`Питомец «${pet.name}» добавлен.`);
+      navigate(`/pets/${pet.id}`);
+    } catch (err) {
+      setFormError(err.message);
     } finally {
       setSaving(false);
     }
   }
+
+  const pages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+  const from = data.total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const to = Math.min(page * PAGE_SIZE, data.total);
+  const filtered = Boolean(q || species);
 
   return (
     <>
@@ -139,34 +159,93 @@ export default function PetsPage() {
             <button
               type="button"
               className="icon-add"
-              onClick={openModal}
+              onClick={() => {
+                setFormError("");
+                setAdding(true);
+              }}
               aria-label="Добавить питомца"
               title="Добавить питомца"
             >
               +
             </button>
           </div>
-          <button type="button" onClick={loadPets} disabled={loadingPets}>
-            {loadingPets ? "Загрузка…" : "Загрузить питомцев"}
+          <button type="button" onClick={reload} disabled={loading}>
+            {loading ? "Загрузка…" : "Загрузить питомцев"}
           </button>
         </div>
-        {petsError && <p className="msg error">{petsError}</p>}
-        {pets.length > 0 && (
-          <div className="table-wrap">
-            <table>
+
+        <div className="toolbar">
+          <label className="search">
+            <span className="sr-only">Поиск</span>
+            <input
+              type="search"
+              placeholder="Поиск по кличке, породе или владельцу"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
+          <div className="seg" role="group" aria-label="Фильтр по виду">
+            {SPECIES_FILTERS.map((f) => (
+              <button
+                key={f.value}
+                type="button"
+                className={species === f.value ? "seg-btn is-active" : "seg-btn"}
+                aria-pressed={species === f.value}
+                onClick={() => update({ species: f.value, page: 1 })}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {error && (
+          <p className="msg error">
+            {error}{" "}
+            <button type="button" className="linkish" onClick={reload}>
+              Повторить
+            </button>
+          </p>
+        )}
+
+        {data.items.length > 0 && (
+          <div className={loading ? "table-wrap is-loading" : "table-wrap"}>
+            <table className="pets-table">
               <thead>
                 <tr>
                   <th aria-label="Медкарта"></th>
-                  <th>Кличка</th>
-                  <th>Вид</th>
-                  <th>Порода</th>
-                  <th>Возраст</th>
-                  <th>Вес, кг</th>
-                  <th>Владелец</th>
+                  {COLUMNS.map((c) => (
+                    <th
+                      key={c.label}
+                      className={c.hideSm ? "hide-sm" : undefined}
+                      aria-sort={
+                        c.sort && sort === c.sort
+                          ? order === "asc"
+                            ? "ascending"
+                            : "descending"
+                          : undefined
+                      }
+                    >
+                      {c.sort ? (
+                        <button
+                          type="button"
+                          className="th-sort"
+                          onClick={() => toggleSort(c.sort)}
+                        >
+                          {c.label}
+                          <span aria-hidden="true" className="th-arrow">
+                            {sort === c.sort ? (order === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </button>
+                      ) : (
+                        c.label
+                      )}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {pets.map((p) => (
+                {data.items.map((p) => (
                   <Fragment key={p.id}>
                     <tr>
                       <td>
@@ -185,26 +264,26 @@ export default function PetsPage() {
                         </button>
                       </td>
                       <td>
-                        <strong>{p.name}</strong>
+                        <Link to={`/pets/${p.id}`} className="pet-link">
+                          {p.name}
+                        </Link>
                       </td>
                       <td>
                         <span className={`species-pill ${p.species}`}>
                           {SPECIES_LABEL[p.species] || p.species}
                         </span>
                       </td>
-                      <td>{p.breed || "—"}</td>
+                      <td className="hide-sm">{p.breed || "—"}</td>
                       <td>{ageLabel(p.birth_date)}</td>
-                      <td>{Number(p.weight_kg).toFixed(2)}</td>
-                      <td>{p.owner_name || "—"}</td>
+                      <td>{formatWeight(p.weight_kg)}</td>
+                      <td className="hide-sm">{p.owner_name || "—"}</td>
                     </tr>
                     {expanded === p.id && (
                       <tr className="records-row">
                         <td colSpan={7}>
                           <div className="records-block">
                             <strong>Медкарта</strong>
-                            {!records[p.id] && (
-                              <span className="muted">загрузка…</span>
-                            )}
+                            {!records[p.id] && <span className="muted">загрузка…</span>}
                             {records[p.id] && records[p.id].length === 0 && (
                               <p className="muted">Записей нет</p>
                             )}
@@ -212,21 +291,18 @@ export default function PetsPage() {
                               <ul>
                                 {records[p.id].map((r) => (
                                   <li key={r.id}>
-                                    <span className="visit-date">
-                                      {r.visit_date}
-                                    </span>
+                                    <span className="visit-date">{formatDate(r.visit_date)}</span>
                                     {r.diagnosis ? ` — ${r.diagnosis}` : ""}
-                                    {r.treatment
-                                      ? `; лечение: ${r.treatment}`
-                                      : ""}
-                                    {r.vaccination
-                                      ? `; вакцинация: ${r.vaccination}`
-                                      : ""}
+                                    {r.treatment ? `; лечение: ${r.treatment}` : ""}
+                                    {r.vaccination ? `; вакцинация: ${r.vaccination}` : ""}
                                     {r.notes ? ` (${r.notes})` : ""}
                                   </li>
                                 ))}
                               </ul>
                             )}
+                            <Link to={`/pets/${p.id}?tab=records`} className="more-link">
+                              Открыть карточку →
+                            </Link>
                           </div>
                         </td>
                       </tr>
@@ -237,115 +313,36 @@ export default function PetsPage() {
             </table>
           </div>
         )}
-        {loadingPets && pets.length === 0 && (
-          <p className="empty">Загрузка списка…</p>
-        )}
-        {!loadingPets && pets.length === 0 && !petsError && (
+
+        {loading && data.items.length === 0 && <p className="empty">Загрузка списка…</p>}
+        {!loading && data.items.length === 0 && !error && (
           <p className="empty">
-            Список пуст. Нажмите «+», чтобы добавить первого питомца.
+            {filtered
+              ? "По вашему запросу ничего не найдено."
+              : "Список пуст. Нажмите «+», чтобы добавить первого питомца."}
           </p>
+        )}
+
+        {data.total > 0 && (
+          <div className="list-footer">
+            <span className="muted">
+              {from}–{to} из {data.total} {pluralize(data.total, ["питомца", "питомцев", "питомцев"])}
+            </span>
+            <Pagination page={page} pages={pages} onChange={(n) => update({ page: n })} />
+          </div>
         )}
       </section>
 
-      {modalOpen && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) closeModal();
-          }}
-        >
-          <div
-            className="modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="add-title"
-          >
-            <div className="modal-head">
-              <h2 id="add-title">Добавить питомца</h2>
-              <button
-                type="button"
-                className="modal-close"
-                onClick={closeModal}
-                aria-label="Закрыть"
-                disabled={saving}
-              >
-                ×
-              </button>
-            </div>
-            <form onSubmit={addPet} className="form modal-form">
-              <label>
-                Кличка
-                <input
-                  required
-                  autoFocus
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </label>
-              <label className="field" htmlFor="species-select">
-                Вид
-                <CustomSelect
-                  id="species-select"
-                  value={form.species}
-                  onChange={(v) => setForm({ ...form, species: v })}
-                  options={SPECIES_OPTIONS}
-                />
-              </label>
-              <label>
-                Порода
-                <input
-                  value={form.breed}
-                  onChange={(e) => setForm({ ...form, breed: e.target.value })}
-                />
-              </label>
-              <label className="field" htmlFor="birth-date">
-                Дата рождения
-                <DatePicker
-                  id="birth-date"
-                  value={form.birth_date}
-                  onChange={(v) => setForm({ ...form, birth_date: v })}
-                  required
-                />
-              </label>
-              <label>
-                Вес, кг
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                  value={form.weight_kg}
-                  onChange={(e) =>
-                    setForm({ ...form, weight_kg: e.target.value })
-                  }
-                />
-              </label>
-              <label>
-                Владелец
-                <input
-                  value={form.owner_name}
-                  onChange={(e) =>
-                    setForm({ ...form, owner_name: e.target.value })
-                  }
-                />
-              </label>
-              <div className="modal-actions">
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={closeModal}
-                  disabled={saving}
-                >
-                  Отмена
-                </button>
-                <button type="submit" disabled={saving}>
-                  {saving ? "Сохранение…" : "Добавить"}
-                </button>
-              </div>
-            </form>
-            {formError && <p className="msg error">{formError}</p>}
-          </div>
-        </div>
+      {adding && (
+        <Modal title="Добавить питомца" onClose={() => setAdding(false)} busy={saving}>
+          <PetForm
+            submitLabel="Добавить"
+            saving={saving}
+            error={formError}
+            onSubmit={addPet}
+            onCancel={() => setAdding(false)}
+          />
+        </Modal>
       )}
     </>
   );

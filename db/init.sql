@@ -18,6 +18,13 @@ CREATE TABLE medical_records (
     notes TEXT
 );
 
+CREATE TABLE weight_logs (
+    id SERIAL PRIMARY KEY,
+    pet_id INT NOT NULL REFERENCES pets(id) ON DELETE CASCADE,
+    logged_on DATE NOT NULL,
+    weight_kg NUMERIC(5, 2) NOT NULL CHECK (weight_kg > 0)
+);
+
 -- разные стадии: щенок, котёнок, взрослые, пожилые
 INSERT INTO pets (name, species, breed, birth_date, weight_kg, owner_name) VALUES
     ('Рекс', 'dog', 'Лабрадор', '2023-06-15', 28.50, 'Иванов А.'),
@@ -57,3 +64,22 @@ INSERT INTO medical_records (pet_id, visit_date, diagnosis, treatment, vaccinati
     (11, '2026-05-22', NULL, NULL, 'Бешенство', NULL),
     (12, '2026-01-11', 'Конъюнктивит', 'Глазные капли', NULL, NULL),
     (12, '2026-08-03', 'Гельминты', 'Мильбемакс', NULL, 'Профилактика');
+
+-- дневник веса: коэффициенты к текущему весу (молодые растут, пожилые худеют)
+INSERT INTO weight_logs (pet_id, logged_on, weight_kg)
+SELECT p.id, CURRENT_DATE - f.days, ROUND(p.weight_kg * f.k, 2)
+FROM pets p
+JOIN (VALUES
+    (1, 150, 0.95), (1, 75, 0.98), (1, 0, 1.00),
+    (2, 150, 0.45), (2, 75, 0.70), (2, 0, 1.00),
+    (3, 150, 1.06), (3, 75, 1.03), (3, 0, 1.00),
+    (4, 90, 0.40), (4, 45, 0.70), (4, 0, 1.00),
+    (5, 150, 0.97), (5, 75, 0.99), (5, 0, 1.00),
+    (6, 150, 1.08), (6, 75, 1.04), (6, 0, 1.00),
+    (7, 150, 0.98), (7, 75, 0.99), (7, 0, 1.00),
+    (8, 150, 0.94), (8, 75, 0.97), (8, 0, 1.00),
+    (9, 150, 0.62), (9, 75, 0.82), (9, 0, 1.00),
+    (10, 60, 0.45), (10, 30, 0.72), (10, 0, 1.00),
+    (11, 150, 1.10), (11, 75, 1.05), (11, 0, 1.00),
+    (12, 150, 0.99), (12, 75, 1.00), (12, 0, 1.00)
+) AS f(pet_id, days, k) ON f.pet_id = p.id;

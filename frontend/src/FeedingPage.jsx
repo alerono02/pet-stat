@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import CustomSelect from "./CustomSelect.jsx";
-import {
-  SPECIES_LABEL,
-  errorMessage,
-  fetchPets,
-  readError,
-} from "./api.js";
+import usePageTitle from "./usePageTitle.js";
+import { SPECIES_LABEL, api, fetchPets } from "./api.js";
 
 export default function FeedingPage() {
+  usePageTitle("Норма кормления");
   const [pets, setPets] = useState([]);
   const [loadingPets, setLoadingPets] = useState(false);
   const [petsError, setPetsError] = useState("");
@@ -24,11 +21,11 @@ export default function FeedingPage() {
     setLoadingPets(true);
     setPetsError("");
     try {
-      const data = await fetchPets();
+      const data = (await fetchPets({ sort: "name", page_size: 100 })).items;
       setPets(data);
       if (data.length && !selectedId) setSelectedId(String(data[0].id));
     } catch (err) {
-      setPetsError(err.message || "Не удалось загрузить питомцев.");
+      setPetsError(err.message);
     } finally {
       setLoadingPets(false);
     }
@@ -54,14 +51,9 @@ export default function FeedingPage() {
     setNormError("");
     setNorm(null);
     try {
-      const res = await fetch(`/api/pets/${selectedId}/feeding-norm`);
-      if (!res.ok) {
-        setNormError(errorMessage(res.status, await readError(res)));
-        return;
-      }
-      setNorm(await res.json());
-    } catch {
-      setNormError("Не удалось рассчитать норму.");
+      setNorm(await api.feedingNorm(selectedId));
+    } catch (err) {
+      setNormError(err.message);
     } finally {
       setLoadingNorm(false);
     }

@@ -21,6 +21,9 @@ class Pet(Base):
     records: Mapped[list["MedicalRecord"]] = relationship(
         back_populates="pet", cascade="all, delete-orphan"
     )
+    weights: Mapped[list["WeightLog"]] = relationship(
+        back_populates="pet", cascade="all, delete-orphan"
+    )
 
 
 class MedicalRecord(Base):
@@ -35,3 +38,14 @@ class MedicalRecord(Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     pet: Mapped["Pet"] = relationship(back_populates="records")
+
+
+class WeightLog(Base):
+    __tablename__ = "weight_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pet_id: Mapped[int] = mapped_column(ForeignKey("pets.id", ondelete="CASCADE"))
+    logged_on: Mapped[date] = mapped_column(Date, nullable=False)
+    weight_kg: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+
+    pet: Mapped["Pet"] = relationship(back_populates="weights")

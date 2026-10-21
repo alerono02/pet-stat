@@ -26,7 +26,7 @@ def test_crud_pets(client):
 
     r = client.get("/api/pets")
     assert r.status_code == 200
-    assert len(r.json()) == 1
+    assert r.json()["total"] == 1
 
     r = client.put(f"/api/pets/{pet_id}", json={"weight_kg": 13.0})
     assert r.status_code == 200
@@ -36,7 +36,7 @@ def test_crud_pets(client):
     assert r.status_code == 204
 
     r = client.get("/api/pets")
-    assert r.json() == []
+    assert r.json()["items"] == []
 
 
 def test_404_pet(client):
@@ -90,7 +90,7 @@ def test_feeding_norm_ok(client):
         "life_stage": "взрослый",
     }
 
-    with patch("app.main.httpx.Client") as mock_client_cls:
+    with patch("app.web_service.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
         mock_client.__exit__.return_value = False
@@ -111,7 +111,7 @@ def test_feeding_norm_502_unavailable(client):
     r = client.post("/api/pets", json=_pet_payload())
     pet_id = r.json()["id"]
 
-    with patch("app.main.httpx.Client") as mock_client_cls:
+    with patch("app.web_service.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
         mock_client.__exit__.return_value = False
@@ -130,7 +130,7 @@ def test_feeding_norm_502_bad_status(client):
     mock_resp = MagicMock()
     mock_resp.status_code = 500
 
-    with patch("app.main.httpx.Client") as mock_client_cls:
+    with patch("app.web_service.httpx.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
         mock_client.__exit__.return_value = False
